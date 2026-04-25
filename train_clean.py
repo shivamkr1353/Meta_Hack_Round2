@@ -1,12 +1,14 @@
 import os
 import re
 import json
+import math
+import copy
 import random
 import torch
 import logging
 from enum import Enum, auto
 from dataclasses import dataclass, field
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional, Tuple
 from collections import Counter
 
 from transformers import AutoTokenizer, AutoModelForCausalLM, EarlyStoppingCallback, TrainerCallback
@@ -14,14 +16,244 @@ from peft import LoraConfig, get_peft_model
 from datasets import Dataset
 from trl import SFTTrainer, SFTConfig
 
-from api_drift_gym import ApiDriftGymEnv
+try:
+    from api_drift_gym import ApiDriftGymEnv
+except ImportError:
+    class ApiDriftGymEnv:
+        BASE_SCHEMAS = {
+            "/user": {"id": "int", "name": "str"},
+            "/orders": {"user_id": "int", "limit": "int"},
+            "/payment": {"txn_id": "str", "amount": "float"},
+            "/process": {"user_id": "int", "order_count": "int"},
+            "/summary": {"email": "str", "message": "str"},
+        }
+        DRIFT_OPTIONS = {
+            "/user": [
+                {"drifted_schema": {"id": "int", "full_name": "str"}, "drift_case": "rename_field"},
+                {"drifted_schema": {"user_id": "int", "full_name": "str"}, "drift_case": "partial_schema_drift"},
+            ],
+            "/orders": [
+                {"drifted_schema": {"account_id": "int", "max_results": "int"}, "drift_case": "rename_field"},
+                {"drifted_schema": {"user_id": "int", "page_size": "int"}, "drift_case": "partial_schema_drift"},
+            ],
+            "/payment": [
+                {"drifted_schema": {"payment_id": "str", "status": "str"}, "drift_case": "rename_field"},
+                {"drifted_schema": {"txn_id": "str", "payment_status": "str"}, "drift_case": "partial_schema_drift"},
+            ],
+            "/process": [
+                {"drifted_schema": {"account_id": "int", "total_orders": "int"}, "drift_case": "rename_field"},
+                {"drifted_schema": {"user_id": "int", "aggregate_count": "int"}, "drift_case": "partial_schema_drift"},
+            ],
+            "/summary": [
+                {"drifted_schema": {"recipient": "str", "summary": "str"}, "drift_case": "rename_field"},
+                {"drifted_schema": {"email": "str", "digest": "str"}, "drift_case": "partial_schema_drift"},
+            ],
+        }
+        WORKFLOWS = {
+            "hard": [
+                {
+                    "task": "Build an enterprise customer summary across services",
+                    "steps": [
+                        {"name": "fetch_user", "endpoint": "/user"},
+                        {"name": "fetch_orders", "endpoint": "/orders"},
+                        {"name": "process_data", "endpoint": "/process"},
+                        {"name": "send_summary", "endpoint": "/summary"},
+                    ],
+                }
+            ],
+        }
+        UNUSED_FIELD_POOL = ["legacy_id", "debug_mode", "trace_token", "deprecated_flag"]
+
+        def __init__(self, max_steps: int = 20, seed: Optional[int] = None, difficulty: Optional[str] = None):
+            self.max_steps = max_steps
+            self.default_difficulty = difficulty or "hard"
+            self.rng = random.Random(seed)
+            self.state: Dict[str, Any] = {}
+
+        def reset(self, seed: Optional[int] = None, difficulty: Optional[str] = None) -> Dict[str, Any]:
+            if seed is not None:
+                self.rng.seed(seed)
+            episode_difficulty = difficulty or self.default_difficulty
+            template = copy.deepcopy(self.rng.choice(self.WORKFLOWS[episode_difficulty]))
+            workflow = [
+                {**step, "completed": False, "skipped": False, "attempts": 0}
+                for step in template["steps"]
+            ]
+            api_states = {}
+            for step in workflow:
+                endpoint = step["endpoint"]
+                drift = copy.deepcopy(self.rng.choice(self.DRIFT_OPTIONS[endpoint]))
+                extra_count = 1 if self.rng.random() < 0.5 else 2
+                api_states[endpoint] = {
+                    "endpoint": endpoint,
+                    "original_schema": copy.deepcopy(self.BASE_SCHEMAS[endpoint]),
+                    "drifted_schema": drift["drifted_schema"],
+                    "drift_case": drift["drift_case"],
+                    "extra_unused_fields": self.rng.sample(self.UNUSED_FIELD_POOL, k=extra_count),
+                    "saw_failure": False,
+                    "pending_payload": None,
+                }
+            self.state = {
+                "task": template["task"],
+                "difficulty": episode_difficulty,
+                "workflow": workflow,
+                "workflow_step": 0,
+                "api_states": api_states,
+                "step_count": 0,
+                "last_endpoint": None,
+                "resolved": False,
+            }
+            return self._obs("reset", "", "", {
+                "task": self.state["task"],
+                "difficulty": self.state["difficulty"],
+                "workflow": [{"name": s["name"], "endpoint": s["endpoint"]} for s in workflow],
+                "known_schema": copy.deepcopy(self.BASE_SCHEMAS[self._current_endpoint()]),
+            })
+
+        def step(self, action: str) -> Tuple[Dict[str, Any], float, bool, Dict[str, Any]]:
+            self.state["step_count"] += 1
+            name, endpoint, payload = self._parse_action(action)
+            endpoint = endpoint or self._current_endpoint()
+            reward = 0.0
+            response = ""
+            error = ""
+            hint = None
+
+            if name == "call_api":
+                response, error, reward = self._call_api(endpoint, payload)
+            elif name == "inspect_schema":
+                hint = self._inspect_schema(endpoint)
+                response = "Schema inspection completed."
+                reward = 1.0
+            elif name == "transform_request":
+                if isinstance(payload, dict) and endpoint in self.state["api_states"]:
+                    self.state["api_states"][endpoint]["pending_payload"] = copy.deepcopy(payload)
+                    hint = {"pending_payload": copy.deepcopy(payload)}
+                    response = "Request transformed."
+                    reward = 1.0
+                else:
+                    error = "transform_request requires a JSON object payload."
+                    reward = -1.0
+            elif name == "skip_step":
+                self.state["workflow_step"] += 1
+                response = "Skipped workflow step."
+                reward = -0.5
+            else:
+                error = "Invalid action format."
+                reward = -1.0
+
+            done = self.state["resolved"] or self.state["step_count"] >= self.max_steps
+            done = done or self.state["workflow_step"] >= len(self.state["workflow"])
+            return self._obs(action, response, error, hint), reward, done, {"resolved": self.state["resolved"]}
+
+        def _parse_action(self, action: str) -> Tuple[str, Optional[str], Optional[Dict[str, Any]]]:
+            if action == "skip_step":
+                return "skip_step", self._current_endpoint(), None
+            if action.startswith("inspect_schema:"):
+                return "inspect_schema", self._normalize_endpoint(action.split(":", 1)[1]), None
+            for name in ("call_api", "transform_request"):
+                prefix = f"{name}:"
+                if action.startswith(prefix):
+                    endpoint, _, payload_raw = action[len(prefix):].partition(":")
+                    payload = self._parse_payload(payload_raw) if payload_raw else None
+                    return name, self._normalize_endpoint(endpoint), payload
+            return "invalid", None, None
+
+        def _call_api(self, endpoint: Optional[str], payload: Optional[Dict[str, Any]]) -> Tuple[str, str, float]:
+            if endpoint not in self.state["api_states"] or not isinstance(payload, dict):
+                return "", "API call requires a known endpoint and JSON object payload.", -1.0
+            api_state = self.state["api_states"][endpoint]
+            matched, details = self._matches_schema(api_state["drifted_schema"], payload)
+            if not matched:
+                api_state["saw_failure"] = True
+                parts = []
+                if details["missing"]:
+                    parts.append(f"missing fields={details['missing']}")
+                if details["unexpected"]:
+                    parts.append(f"unexpected fields={details['unexpected']}")
+                error = "Schema mismatch: " + "; ".join(parts or ["unknown contract drift"])
+                return "", error, -0.5
+
+            if endpoint == self._current_endpoint():
+                self.state["workflow"][self.state["workflow_step"]]["completed"] = True
+                self.state["workflow_step"] += 1
+            self.state["last_endpoint"] = endpoint
+            self.state["resolved"] = self.state["workflow_step"] >= len(self.state["workflow"])
+            response = json.dumps({"status": "success", "endpoint": endpoint}, sort_keys=True)
+            return response, "", 1.0
+
+        def _inspect_schema(self, endpoint: Optional[str]) -> Dict[str, Any]:
+            api_state = self.state["api_states"][endpoint]
+            if api_state["saw_failure"]:
+                return {
+                    "endpoint": endpoint,
+                    "required_fields": sorted(api_state["drifted_schema"].keys()),
+                    "field_types": copy.deepcopy(api_state["drifted_schema"]),
+                    "drift_case": api_state["drift_case"],
+                    "deprecated_candidates": copy.deepcopy(api_state["extra_unused_fields"]),
+                }
+            return {
+                "endpoint": endpoint,
+                "field_count": len(api_state["drifted_schema"]),
+                "notes": "Partial compatibility metadata only. Trigger a failure to reveal more.",
+            }
+
+        def _matches_schema(self, schema: Dict[str, str], payload: Dict[str, Any]) -> Tuple[bool, Dict[str, List[str]]]:
+            expected = set(schema.keys())
+            actual = set(payload.keys())
+            details = {"missing": sorted(expected - actual), "unexpected": sorted(actual - expected)}
+            return not details["missing"] and not details["unexpected"], details
+
+        def _obs(self, action: str, response: str, error: str, hint: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+            return {
+                "last_action": action,
+                "api_response": response,
+                "error_message": error,
+                "available_hint": hint,
+                "step_count": self.state["step_count"],
+                "workflow_step": self.state["workflow_step"],
+                "current_endpoint": self._current_endpoint(),
+                "difficulty": self.state["difficulty"],
+            }
+
+        def _current_endpoint(self) -> Optional[str]:
+            index = self.state.get("workflow_step", 0)
+            workflow = self.state.get("workflow", [])
+            if index >= len(workflow):
+                return self.state.get("last_endpoint")
+            return workflow[index]["endpoint"]
+
+        def _normalize_endpoint(self, endpoint: Optional[str]) -> Optional[str]:
+            if not endpoint:
+                return self._current_endpoint()
+            return endpoint if endpoint.startswith("/") else f"/{endpoint}"
+
+        def _parse_payload(self, raw: str) -> Optional[Dict[str, Any]]:
+            try:
+                payload = json.loads(raw)
+            except json.JSONDecodeError:
+                return None
+            return payload if isinstance(payload, dict) else None
 
 # Ensure logs flow immediately to HF Jobs console
 os.environ["PYTHONUNBUFFERED"] = "1"
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
 logging.getLogger("transformers").setLevel(logging.ERROR)
 
+SEED = 42
+N_TRAIN = 200
+NUM_EPOCHS = 2
+PER_DEVICE_TRAIN_BATCH_SIZE = 2
+GRADIENT_ACCUMULATION_STEPS = 4
+MAX_SEQ_LENGTH = 512
+
+random.seed(SEED)
+torch.manual_seed(SEED)
+if torch.cuda.is_available():
+    torch.cuda.manual_seed_all(SEED)
+
 print("Initializing Environment...")
-env = ApiDriftGymEnv(max_steps=20, seed=42, difficulty="hard")
+env = ApiDriftGymEnv(max_steps=20, seed=SEED, difficulty="hard")
 
 class StagePhase(Enum):
     UNTOUCHED   = auto()
@@ -234,7 +466,6 @@ def make_sample(prompt, label):
     return {"text": prompt + " " + label.strip() + tokenizer.eos_token}
 
 print("Generating Data using Stage-Aware Policy...")
-N_TRAIN = 300
 training_data = []
 policy = StageAwarePolicy()
 
@@ -255,10 +486,16 @@ for ep_idx in range(N_TRAIN):
 print(f"Collected {len(training_data)} examples.")
 
 print(f"Loading model {MODEL_NAME} for LoRA...")
+model_dtype = torch.float16 if torch.cuda.is_available() else torch.float32
 model = AutoModelForCausalLM.from_pretrained(
-    MODEL_NAME, torch_dtype=torch.float16,
-    device_map="auto", trust_remote_code=True,
+    MODEL_NAME,
+    torch_dtype=model_dtype,
+    low_cpu_mem_usage=True,
+    trust_remote_code=True,
 )
+model.config.use_cache = False
+if hasattr(model, "gradient_checkpointing_enable"):
+    model.gradient_checkpointing_enable()
 
 lora_config = LoraConfig(
     r=16, lora_alpha=32, lora_dropout=0.05,
@@ -269,21 +506,32 @@ model = get_peft_model(model, lora_config)
 
 class ProgressLoggingCallback(TrainerCallback):
     def on_log(self, args, state, control, logs=None, **kwargs):
-        if logs and "loss" in logs:
-            print(f"[HF Jobs Log] Step {state.global_step}: Loss = {logs['loss']:.4f}")
+        if not logs:
+            return
+        loss = logs.get("loss", logs.get("train_loss"))
+        if loss is None:
+            return
+        epoch_value = logs.get("epoch", state.epoch or 0)
+        epoch = max(1, min(int(math.ceil(float(epoch_value))), int(args.num_train_epochs)))
+        print(f"Epoch {epoch} | Loss: {float(loss):.4f}", flush=True)
 
 dataset = Dataset.from_list(training_data)
 
 training_args = SFTConfig(
     output_dir="./results",
-    num_train_epochs=3,
-    per_device_train_batch_size=8,
-    gradient_accumulation_steps=2,
+    num_train_epochs=NUM_EPOCHS,
+    per_device_train_batch_size=PER_DEVICE_TRAIN_BATCH_SIZE,
+    gradient_accumulation_steps=GRADIENT_ACCUMULATION_STEPS,
     learning_rate=2e-4,
-    logging_steps=10,
-    save_strategy="epoch",
+    logging_strategy="epoch",
+    save_strategy="no",
     dataset_text_field="text",
-    max_seq_length=512,
+    max_length=MAX_SEQ_LENGTH,
+    gradient_checkpointing=True,
+    fp16=torch.cuda.is_available(),
+    bf16=False,
+    seed=SEED,
+    data_seed=SEED,
     report_to="none"
 )
 
@@ -299,7 +547,7 @@ print("Starting Optimized HF Jobs SFT Training...")
 trainer.train()
 
 # Final clean save, replacing colab logic
-print("Training complete! Saving to ./trained_model")
-model.save_pretrained("./trained_model")
-tokenizer.save_pretrained("./trained_model")
-print("Done! You can now use the model locally or push to Hub.")
+print("Training complete! Saving to final_model")
+model.save_pretrained("final_model")
+tokenizer.save_pretrained("final_model")
+print("Done! Saved model artifacts to final_model")
