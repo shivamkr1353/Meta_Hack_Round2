@@ -2,9 +2,5 @@ torch
 transformers
 peft
 trl
+accelerate
 datasets
-matplotlib
-requests
-pydantic
-fastapi
-uvicorn
