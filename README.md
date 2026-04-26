@@ -25,9 +25,42 @@ By episode 10, it had learned to stop blindly retrying. It started inspecting fi
 > 🏆 **Submission for Theme #3.2: Personalized Tasks**  
 > 🎯 **Targeting Bonus Prize:** Patronus AI - *Consumer Workflows with Schema Drift*
 
-> Built with [OpenEnv v0.2.1](https://github.com/meta-pytorch/OpenEnv/tree/v0.2.1) | Trained on [HF Jobs](https://huggingface.co/docs/hub/jobs) with T4 GPU | Model: `Qwen2.5-0.5B-Instruct` + LoRA SFT | Adapter: [shivamkr1353/api-drift-sft-qwen](https://huggingface.co/shivamkr1353/api-drift-sft-qwen)
+> Built with [OpenEnv v0.2.1](https://github.com/meta-pytorch/OpenEnv/tree/v0.2.1) | Trained on [HF Jobs](https://huggingface.co/docs/hub/jobs) with T4 GPU | Model: `Qwen2.5-0.5B-Instruct` + LoRA SFT | Training via [HF TRL](https://github.com/huggingface/trl) in [Colab](train.ipynb)
 
 ---
+
+## Architecture
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│                      API DRIFT GYM LOOP                          │
+│                                                                  │
+│  ┌─────────────┐    ┌──────────────┐    ┌────────────────────┐   │
+│  │ Schema Drift│───►│  Environment │───►│       Agent        │   │
+│  │ Generator   │    │ (OpenEnv +   │    │ (Qwen 0.5B + LoRA) │   │
+│  │ Easy/Med/   │    │ api_drift_gym)│   │ inspect_schema     │   │
+│  │ Hard drift  │    │              │    │ transform_request  │   │
+│  └─────────────┘    └──────────────┘    │ call_api / retry   │   │
+│                            │            └────────┬───────────┘   │
+│                            │                     │               │
+│                     API response           reward signal         │
+│                                                 │                │
+│                                                 ▼                │
+│                                        ┌────────────────┐        │
+│                                        │  SFT Trainer   │        │
+│                                        │  (TRL + LoRA)  │        │
+│                                        └────────────────┘        │
+└──────────────────────────────────────────────────────────────────┘
+```
+
+## Drift Types & Difficulty Escalation
+
+| Difficulty | What Gets Injected | What Agent Must Do |
+|------------|--------------------|---------------------|
+| `easy` | Simple missing field (e.g. `full_name`) | Map available fields to schema (`inspect` -> `transform`) |
+| `medium` | Nested dictionary drift & missing required keys | Deep JSON restructuring before `call_api` |
+| `hard` | Multi-endpoint workflows where stage 1 schema is valid, but stage 2 drifts | Maintain context, detect failure mid-workflow, and re-inspect dynamically |
+
 
 ## 🔗 Links
 
@@ -91,7 +124,18 @@ obs, reward, done, info = env.step("retry")
 
 ---
 
-## Training
+---
+
+## Training with HF TRL (Colab)
+
+A complete training notebook is provided at [`train.ipynb`](train.ipynb) using **HF TRL's SFTTrainer**. This satisfies the Hackathon requirement for a minimal Colab training script. The notebook covers:
+
+1. Initializing the `ApiDriftGymEnv` locally.
+2. Generating teacher trajectories using the `StageAwarePolicy`.
+3. Configuring LoRA (r=16, alpha=32) for `Qwen2.5-0.5B-Instruct`.
+4. Running SFT training and saving checkpoints.
+
+Alternatively, you can launch a training job on Hugging Face Jobs:
 
 **Install**
 ```bash
