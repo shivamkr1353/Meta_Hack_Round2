@@ -4,3 +4,6 @@ peft==0.19.1
 trl==1.2.0
 accelerate==1.13.0
 datasets==4.8.4
+gradio>=5.0.0
+matplotlib>=3.8.0
+numpy>=1.24.0

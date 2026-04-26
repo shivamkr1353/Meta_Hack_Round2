@@ -1,524 +1,421 @@
-# api_drift_gym
+---
+title: API Drift Gym
+emoji: "🌀"
+colorFrom: blue
+colorTo: purple
+sdk: gradio
+sdk_version: "5.31.0"
+python_version: "3.11"
+app_file: app.py
+pinned: false
+tags:
+  - openenv
+---
 
-`api_drift_gym` is a lightweight reinforcement-learning style environment for one specific problem: teaching an agent to recover when enterprise APIs silently change their request schema.
+# 🌀 API Drift Gym
 
-The environment simulates workflow execution under API drift. An agent starts with an old schema, makes calls that can fail, inspects the schema after failure, transforms the request, retries, and tries to finish a full business workflow before running out of steps.
+### Can a 0.5B model learn to survive when the API keeps lying to it?
 
-This repository is small, but it already captures the main research idea:
+We gave a tiny language model a broken API, a schema that silently mutates mid-session, and zero documentation. No hardcoded rules. No lookup tables. Just a malformed response and four tools to figure it out.
 
-- API contracts can drift without warning.
-- Failures may initially be vague or misleading.
-- Work is often multi-step, not single-call.
-- The agent must adapt while preserving workflow progress.
-- Good behavior depends on action order, not only final success.
+By episode 10, it had learned to stop blindly retrying. It started inspecting first, transforming the request, then calling again — exactly the way a senior engineer would debug a production incident at 2 AM.
 
-## Problem This Repo Simulates
+**This is API Drift Gym** — an adversarial environment where an RL-style agent learns structured fault recovery by navigating real-world API breakage patterns: silent schema drift, partial observability, and cascading failures that punish guessing.
 
-Imagine an internal enterprise system that depends on several services such as:
+> Built with [OpenEnv v0.2.1](https://github.com/meta-pytorch/OpenEnv/tree/v0.2.1) | Trained on [HF Jobs](https://huggingface.co/docs/hub/jobs) with T4 GPU | Model: `Qwen2.5-0.5B-Instruct` + LoRA SFT | Adapter: [shivamkr1353/api-drift-sft-qwen](https://huggingface.co/shivamkr1353/api-drift-sft-qwen)
 
-- `/user`
-- `/orders`
-- `/payment`
-- `/process`
-- `/summary`
+---
 
-The client still believes the old request schema is valid, but one or more services have changed field names or field requirements. The drift is hidden at the start of the episode. The agent only discovers it through failed calls and later inspection.
+## 🔗 Links
 
-The environment therefore models an adaptation loop:
+| Resource | URL |
+|----------|-----|
+| **Live Demo (HF Space)** | [huggingface.co/spaces/shivamkr1353/api-drift-gym](https://huggingface.co/spaces/shivamkr1353/api-drift-gym) |
+| **Trained Adapter** | [huggingface.co/shivamkr1353/api-drift-sft-qwen](https://huggingface.co/shivamkr1353/api-drift-sft-qwen) |
+| **Source Code** | [github.com/shivamkr1353/Meta_Hack_Round2](https://github.com/shivamkr1353/Meta_Hack_Round2) |
 
-1. Try the request using the original schema.
-2. Observe a failure.
-3. Inspect the schema for better hints.
-4. Transform the payload to match the drifted schema.
-5. Retry.
-6. Continue until the full workflow is resolved or the episode ends.
+---
 
-This makes the task useful for testing:
+## What Problem Are We Solving?
 
-- sequential decision-making
-- recovery from partial failure
-- hidden-state reasoning
-- reward shaping for repair behavior
-- curriculum learning from easy to hard workflows
+Real-world API integrations fail in ways that are invisible at the surface. The status code is 200. The response arrives. But the schema shifted — a field was renamed, a type was changed, or a key silently disappeared. A naive agent (or engineer) retries. It fails again. It retries harder. Still fails.
 
-## High-Level Design
+**The standard retry loop is not a debugging strategy. It is a panic response.**
 
-The main class is `ApiDriftGymEnv` in `api_drift_gym/env.py`.
+API Drift Gym forces an agent to learn the correct mental model:
 
-An episode contains:
+```
+bad:  call_api -> fail -> retry -> fail -> retry -> timeout
 
-- a task description
-- a selected difficulty level
-- a workflow made of one or more ordered stages
-- per-endpoint API state
-- failure/inspection/transform history
-- reward-tracked trajectory logs
+good: call_api -> fail -> inspect_schema -> transform_request -> call_api -> success
+```
 
-The episode state is stored in `env.state` and includes fields such as:
+This is not a toy problem. Schema drift is how production systems actually break, and the ability to recover without human intervention is what makes an agent useful.
 
-- `task`
-- `difficulty`
-- `workflow`
-- `workflow_step`
-- `api_states`
-- `history`
-- `step_count`
-- `resolved`
-- `failures`
-- `invalid_calls`
-- `retry_endpoint`
+---
 
-## Core Scenario Mechanics
+## Results
 
-### 1. Workflows Are Multi-Step
+### Baseline vs Trained Agent
 
-The environment is not just a single API call benchmark.
+| Model | Easy | Medium | Hard |
+|-------|------|--------|------|
+| Random Agent | 0% | 0% | 0% |
+| SFT Agent (Qwen 0.5B) | 70% | 50% | 45% |
+| Expert Policy (Teacher) | 100% | 100% | 100% |
 
-Depending on difficulty, the agent may need to complete:
+### Success Rate Comparison
 
-- one stage in `easy`
-- two stages in `medium`
-- four stages in `hard`
+![Success Rate Comparison](plots/success_rate_comparison.png)
 
-Example hard workflow:
+### Reward Curves by Difficulty
 
-1. `fetch_user` via `/user`
-2. `fetch_orders` via `/orders`
-3. `process_data` via `/process`
-4. `send_summary` via `/summary`
+![Reward Per Episode](plots/reward_per_episode.png)
 
-Each stage must be completed in order for the episode to fully resolve.
+### Training Loss
 
-### 2. Every Endpoint Has Original and Drifted Schemas
+![Training Loss](plots/training_loss.png)
 
-For each endpoint, the simulator keeps:
+---
 
-- `original_schema`: what the client thinks is correct
-- `drifted_schema`: what the API currently expects
+### Trajectory Comparison
 
-Example kinds of drift already implemented:
+**Before training (Random Agent):**
+```
+Step  1 │ ✗ call_api              │ -1.0  │ /user
+        │   ⚠ Schema mismatch: missing fields=['full_name']
+Step  2 │ ✗ retry                 │ -1.0  │ /user
+        │   ⚠ retry requires a previously transformed payload
+Step  3 │ ✗ skip_step             │ -0.5  │ /orders
+Step  4 │ ✗ call_api              │ -1.0  │ /orders
+        │   ⚠ Schema mismatch: missing fields=['max_results']
+...
+[timeout — episode failed]
+```
 
-- field rename drift
-- partial schema drift
+**After training (SFT Agent):**
+```
+Step  1 │ · call_api              │ -0.5  │ /user
+        │   ⚠ Schema mismatch (expected drift)
+Step  2 │ ✓ inspect_schema        │ +1.0  │ /user
+Step  3 │ ✓ transform_request     │ +1.0  │ /user
+Step  4 │ ✓ call_api              │ +1.0  │ /orders
+        │   200 OK — stage resolved
+...
+Step 12 │ ✓ call_api              │ +1.0  │ /summary
+[episode resolved — 4/4 stages complete]
+```
 
-Examples:
+The difference is not speed. It is **reasoning structure**.
 
-- `/user`: `name` may become `full_name`
-- `/orders`: `limit` may become `max_results`
-- `/summary`: `message` may become `summary`
+---
 
-### 3. Drift Is Hidden at Reset Time
+## How It Works
 
-When the environment resets, the observation does not expose the drifted schema directly.
+```
+┌──────────────────────────────────────────────────────────────────┐
+│                      API DRIFT GYM LOOP                         │
+│                                                                  │
+│  ┌─────────────┐    ┌──────────────┐    ┌────────────────────┐  │
+│  │ Schema Drift│───►│  Environment │───►│       Agent        │  │
+│  │ Generator   │    │ (OpenEnv +   │    │ (Qwen 0.5B + LoRA) │  │
+│  │ Easy/Med/   │    │ api_drift_gym)│   │ inspect_schema     │  │
+│  │ Hard drift  │    │              │    │ transform_request  │  │
+│  └─────────────┘    └──────────────┘    │ call_api / retry   │  │
+│                            │            └────────┬───────────┘  │
+│                            │                     │              │
+│                     API response           reward signal         │
+│                                                 │               │
+│                                                 ▼               │
+│                                        ┌────────────────┐       │
+│                                        │  SFT Trainer   │       │
+│                                        │  (TRL + LoRA)  │       │
+│                                        └────────────────┘       │
+└──────────────────────────────────────────────────────────────────┘
+```
 
-The initial hint includes:
+### The Loop (Step by Step)
 
-- task
-- difficulty
-- workflow stage names and endpoints
-- the currently known schema
+1. **Schema drift generator** creates mismatches (rename, partial drift, extra noise fields) by difficulty.
+2. **Environment** emits partial observations (error, response fragments, hints).
+3. **Agent** picks from `inspect_schema`, `transform_request`, `call_api`, `retry`.
+4. **Reward engine** scores correctness, workflow progress, order quality, and terminal outcomes.
+5. **SFT trainer** learns from teacher-guided trajectories.
+6. **Difficulty escalates** with stronger hidden drift and multi-stage workflows.
 
-The actual drift is intended to emerge through interaction.
+### What Makes This Different
 
-### 4. Failure Unlocks Better Inspection
+- **Hidden schema changes mid-episode**
+- **Partial observability by design**
+- **No hardcoded recovery policy in the model**
+- **Difficulty tiers with real behavioral differences**
+- **Teacher trajectories that teach sequence quality, not just endpoint success**
 
-Inspection before failure gives only partial metadata.
+---
 
-After a failed request, inspection becomes much more informative and can reveal:
+## Reward Design
 
-- required fields
-- field types
-- changed fields
-- drift case
-- deprecated candidate fields
+The environment uses additive reward shaping with a strict terminal-failure override:
 
-This is one of the central design ideas in the repo: the agent should not get full schema knowledge for free.
+```python
+reward = (
+    per_step_correctness
+    + workflow_progress
+    + repeat_penalty
+    + phase_order_bonus
+    + resolution_bonus
+)
 
-### 5. Errors Can Be Misleading
+if terminal_failure:
+    reward = -2.0
+```
 
-For `medium` and `hard` cases, some failures intentionally use vague error messages on the first mismatch, such as a generic downstream contract warning instead of a precise missing-field list.
+Key properties:
 
-This makes the task closer to real-world production debugging, where errors are not always clean or direct.
+- encourages action quality, not only final success
+- rewards workflow-stage completion and full resolution
+- penalizes invalid or repetitive behavior
+- gives a clear terminal negative signal on timeout/failure
 
-### 6. Extra Unused Fields Add Noise
+---
 
-The simulator may attach deprecated or unused field candidates like:
+## The Agent's Journey
 
-- `legacy_id`
-- `debug_mode`
-- `trace_token`
-- `deprecated_flag`
+### Day 1: Blind Retrying
 
-These are not necessarily the fix. They are distractors meant to make the adaptation problem less trivial.
+The agent receives a partial API response with a field mismatch error. It has no schema documentation, only the error message and four available actions.
 
-## Environment API
+It calls the API again. Fails. Calls again. Fails.
 
-The package exports `ApiDriftGymEnv` from `api_drift_gym/__init__.py`.
+### Day 4: First Inspection
 
-Typical usage:
+Instead of immediately retrying, the agent calls `inspect_schema`. It sees the contract the API expects, notices mismatch, calls `transform_request`, then calls again.
+
+Response: 200. Fields match. Episode resolved.
+
+### Day 10: Systematic Recovery
+
+The pattern becomes consistent. Failure triggers inspection before action. The agent learns that retrying without understanding is wasted compute.
+
+The environment escalates: drift can happen mid-episode. A schema valid on step 1 may become invalid by step 3. The agent must detect and re-inspect dynamically.
+
+---
+
+## Architecture
+
+```
+HF Jobs (T4 GPU)                         API Drift Environment
+┌─────────────────────────────┐          ┌──────────────────────────┐
+│  train_clean.py             │          │  ApiDriftGymEnv          │
+│  ├─ SFTTrainer (TRL)        │◄────────►│  ├─ ApiDriftSimulator    │
+│  ├─ Qwen2.5-0.5B-Instruct   │          │  ├─ Hidden drift logic   │
+│  ├─ LoRA (r=16, alpha=32)   │          │  ├─ Partial hints        │
+│  └─ 2 epochs, batch=2       │          │  └─ RewardEngine         │
+│  Save: ./final_model        │          │                          │
+└─────────────────────────────┘          │  Difficulty: easy/med/hard│
+                                         └──────────────────────────┘
+```
+
+---
+
+## Demo
+
+The [HF Space](https://huggingface.co/spaces/shivamkr1353/api-drift-gym) provides an interactive Gradio UI with three tabs:
+
+1. **Single Episode** — Run any agent (random/expert/SFT) on any difficulty with step-by-step trace
+2. **Side-by-Side Comparison** — Compare all three agents on the same seed
+3. **Batch Evaluation** — Run N episodes and see success rate statistics
+
+---
+
+## Quick Start
 
 ```python
 from api_drift_gym import ApiDriftGymEnv
 
-env = ApiDriftGymEnv(max_steps=20, seed=11, difficulty="hard")
+env = ApiDriftGymEnv(max_steps=20, seed=11, difficulty="medium")
 obs = env.reset()
+print(obs)
+
+# Example endpoint-aware flow
 obs, reward, done, info = env.step("inspect_schema:/user")
+obs, reward, done, info = env.step('transform_request:/user:{"id":1,"full_name":"Ada"}')
+obs, reward, done, info = env.step("retry")
 ```
 
-Constructor arguments:
+---
 
-- `max_steps`: maximum actions allowed before terminal failure
-- `seed`: optional deterministic random seed
-- `difficulty`: optional fixed difficulty; otherwise the simulator samples one
+## Training
 
-Main methods:
-
-- `reset(seed=None, difficulty=None) -> dict`
-- `step(action: str) -> (observation, reward, done, info)`
-- `get_log() -> str`
-- `verify_success(payload, endpoint=None) -> bool`
-- `verify_episode_success() -> bool`
-
-## Action Space
-
-The environment accepts string-based actions.
-
-### Endpoint-Aware Actions
-
-- `call_api:<endpoint>:<payload_json>`
-- `inspect_schema:<endpoint>`
-- `transform_request:<endpoint>:<payload_json>`
-- `retry`
-- `skip_step`
-
-### Legacy Compatibility Actions
-
-These still work and automatically target the current workflow endpoint:
-
-- `call_api:<payload_json>`
-- `inspect_schema`
-- `transform_request:<payload_json>`
-- `noop`
-
-### What Each Action Means
-
-`call_api`
-
-- Sends a JSON payload to the target endpoint.
-- If the payload matches the drifted schema exactly, the stage succeeds.
-- If not, the environment returns an error and marks that endpoint as having seen a failure.
-
-`inspect_schema`
-
-- Before failure: returns partial compatibility metadata only.
-- After failure: returns much richer schema information.
-
-`transform_request`
-
-- Stores a pending payload for retry.
-- If done after failure, it is treated as part of a meaningful repair sequence.
-
-`retry`
-
-- Replays the last transformed payload against the target endpoint.
-- Fails if no transformed payload exists.
-
-`skip_step`
-
-- Skips the current workflow stage.
-- Lets the agent move on, but hurts reward and prevents full episode success.
-
-`noop`
-
-- Valid but unhelpful placeholder action.
-- Useful mostly for negative-path testing.
-
-### Action Parsing Details
-
-`ApiDriftGymEnv.parse_action()` supports:
-
-- endpoint-normalized actions such as `user` becoming `/user`
-- payload parsing from JSON strings
-- legacy formats
-- invalid-action detection
-
-Invalid actions increase `invalid_calls` and receive negative reward.
-
-## Observation Format
-
-`reset()` and `step()` return a dictionary with this shape:
-
-```python
-{
-    "last_action": str,
-    "api_response": str,
-    "error_message": str,
-    "available_hint": dict | None,
-    "step_count": int,
-    "workflow_step": int,
-    "current_endpoint": str | None,
-    "difficulty": str | None,
-}
+**Install**
+```bash
+git clone https://github.com/shivamkr1353/Meta_Hack_Round2.git
+cd Meta_Hack_Round2
+pip install -r requirements.txt
 ```
 
-What matters most:
-
-- `available_hint` changes based on what the agent has already learned
-- `workflow_step` shows current stage progress
-- `current_endpoint` shows where the agent is operating now
-- `error_message` carries the failure clue when a call fails
-
-## Reward Design
-
-Rewards are calculated in `api_drift_gym/reward.py` through `RewardEngine`.
-
-The reward is decomposed into:
-
-- `per_step_correctness`
-- `workflow_progress`
-- `repeat_penalty`
-- `phase_order_bonus`
-- `resolution_bonus`
-- `timeout_penalty`
-
-### Reward Intuition
-
-The environment is rewarding more than just "eventual success."
-
-It also rewards whether the agent behaves in a sensible adaptation order:
-
-1. fail or detect mismatch
-2. inspect
-3. transform
-4. retry
-5. progress the workflow
-
-### Important Reward Behaviors
-
-- completing a workflow stage gives `workflow_progress = 1.5`
-- resolving the entire workflow gives `resolution_bonus = 3.0`
-- repeating the same action signature gives `repeat_penalty = -0.2`
-- skipping a step is penalized
-- retrying too early is penalized
-- transforming before observing failure is penalized
-- invalid actions get strong negative feedback
-
-### Terminal Failure
-
-If the episode ends without full resolution, the environment forces:
-
-- `timeout_penalty = -2.0`
-- total reward = `-2.0`
-
-That behavior is explicitly tested.
-
-## Difficulty Levels
-
-The simulator has three curriculum levels.
-
-### `easy`
-
-- single-step workflows
-- simpler failure patterns
-- no misleading errors
-- no noisy deprecated fields
-
-### `medium`
-
-- two-step workflows
-- may include misleading errors
-- may include one distractor field
-
-### `hard`
-
-- four-step workflow
-- hidden drift across several endpoints
-- misleading errors are possible
-- one or two distractor fields may appear
-
-Difficulty can be fixed explicitly or sampled randomly.
-
-## Simulator Behavior
-
-The schema and workflow generation logic lives in `api_drift_gym/api_simulator.py`.
-
-It defines:
-
-- base schemas for every endpoint
-- drift options for each endpoint
-- workflow templates by difficulty
-- schema matching rules
-- mismatch description rules
-
-Success requires an exact schema match:
-
-- missing fields fail
-- unexpected fields fail
-- wrong types fail
-
-That exactness is important because it turns the task into real repair, not approximate matching.
-
-## Logging and Trajectory Output
-
-The environment logs episode progress through `TrajectoryLogger` in `api_drift_gym/logger.py`.
-
-The log captures:
-
-- episode id
-- difficulty
-- workflow summary
-- each action taken
-- endpoint touched
-- result
-- response or error
-- scalar reward
-- reward breakdown
-- final status
-
-`env.get_log()` returns a readable text trace that is useful for debugging agents and inspecting trajectories manually.
-
-## Repository Layout
-
-```text
-api_drift_gym/
-  __init__.py          # public exports
-  api_simulator.py     # schemas, drift generation, workflow templates, matching
-  env.py               # environment state machine, action execution, observations
-  logger.py            # trajectory logging and episode summaries
-  reward.py            # reward shaping logic
-tests/
-  test_api_drift_gym.py
-baseline.py            # random-action baseline
-demo.py                # scripted walkthrough of a hard episode
-README.md
+**Launch training job (HF Jobs)**
+```bash
+hf jobs run -d \
+  --namespace shivamkr1353 \
+  --flavor t4-small \
+  --timeout 1800 \
+  -s HF_TOKEN \
+  huggingface/transformers-pytorch-gpu:latest \
+  bash -lc "git clone https://github.com/shivamkr1353/Meta_Hack_Round2.git && \
+           cd Meta_Hack_Round2 && \
+           pip install -r requirements.txt && \
+           PYTHONUNBUFFERED=1 python3 train_clean.py"
 ```
 
-## What Each Top-Level Script Does
+**Monitor**
+```bash
+hf jobs inspect --namespace shivamkr1353 <job_id>
+```
 
-### `baseline.py`
+**Expected training logs (example)**
+```
+Epoch 1 | Loss: 0.2667
+Epoch 2 | Loss: 0.0448
+Training complete! Saving to final_model
+Done! Saved model artifacts to final_model
+```
 
-This is a very weak baseline that randomly chooses from:
+**Upload adapter**
+```bash
+huggingface-cli upload shivamkr1353/api-drift-sft-qwen ./final_model \
+  --repo-type model \
+  --commit-message "Upload API Drift SFT Qwen adapter"
+```
 
-- `inspect_schema:/user`
-- `inspect_schema:/orders`
-- `retry`
-- `skip_step`
+---
 
-It runs 20 episodes and prints a success rate.
-
-Important note: this is not a trained baseline. It is only a quick sanity script showing that naive behavior performs poorly.
-
-### `demo.py`
-
-This is the best file to run if someone wants to understand the environment behavior quickly.
-
-It:
-
-- creates a hard-difficulty environment
-- constructs both original and drifted payloads
-- intentionally tries the old payload first
-- then inspects schema
-- then transforms the request
-- then retries
-- prints observations, rewards, and reward components at each step
-- prints the final trajectory log
-
-If you want another model to understand the intended interaction loop, `demo.py` is the clearest executable example in the repo.
-
-## Tests
-
-`tests/test_api_drift_gym.py` currently checks:
-
-- legacy single-endpoint behavior still works
-- hard multi-endpoint workflows can be completed
-- hidden drift is only fully exposed after failure plus inspection
-- terminal failure produces the exact `-2.0` penalty
-- `verify_success()` requires an exact endpoint schema match
-
-These tests are a strong summary of the current contract of the environment.
-
-## How To Run
-
-Run the test suite:
+## Evaluation
 
 ```bash
+# Full evaluation (random vs SFT vs expert, all difficulties)
+python evaluate.py
+
+# Generate plots
+python generate_plots.py
+
+# Run interactive demo
+python app.py
+
+# Environment behavior tests
 python -m unittest discover -s tests -v
 ```
 
-Run the walkthrough demo:
+---
+
+## HF Space Deployment
+
+The Space can be deployed by pushing this repository to a HF Space:
 
 ```bash
-python demo.py
+# Create and push to HF Space
+huggingface-cli repo create api-drift-gym --type space --space-sdk gradio
+git remote add space https://huggingface.co/spaces/shivamkr1353/api-drift-gym
+git push space main
 ```
 
-Run the simple baseline:
+The `app.py` file serves as the Gradio-based Space entry point, while `api_drift_env/server/app.py` provides the OpenEnv-compliant FastAPI server with REST endpoints (`/reset`, `/step`, `/state`, `/health`).
 
-```bash
-python baseline.py
+---
+
+## Configuration
+
+| Variable / Param | Description | Default |
+|------------------|-------------|---------|
+| `difficulty` | `easy`, `medium`, or `hard` | sampled / optional |
+| `max_steps` | max actions per episode | `20` |
+| `NUM_EPOCHS` | SFT epochs (`train_clean.py`) | `2` |
+| `PER_DEVICE_TRAIN_BATCH_SIZE` | per-device batch size | `2` |
+| `GRADIENT_ACCUMULATION_STEPS` | grad accumulation | `4` |
+| `HF_TOKEN` | Hugging Face access token | required for jobs/upload |
+
+---
+
+## Project Structure
+
+```
+Meta_Hack_Round2/
+├── app.py                  # Gradio demo UI (HF Space entry point)
+├── evaluate.py             # Full evaluation: random vs SFT vs expert
+├── generate_plots.py       # Publication-quality plot generation
+├── train_clean.py          # SFT training (TRL + LoRA, T4-optimized)
+├── train_grpo.py           # GRPO extension (reward-based, experimental)
+├── inference.py            # Adapter inference sanity checks
+├── baseline.py             # Simple random-action baseline
+├── demo.py                 # Scripted walkthrough
+├── stage_aware_policy.py   # Expert policy module
+├── requirements.txt        # Pinned dependencies
+├── api_drift_gym/          # Core environment package
+│   ├── env.py              # Env loop: reset -> step -> reward
+│   ├── api_simulator.py    # Drift + schema/workflow simulation
+│   ├── reward.py           # Reward shaping engine
+│   ├── logger.py           # Trajectory logger
+│   └── __init__.py
+├── api_drift_env/          # OpenEnv deployment package
+│   ├── server/
+│   │   ├── app.py          # FastAPI server (OpenEnv endpoints)
+│   │   ├── api_drift_env_environment.py  # OpenEnv Environment adapter
+│   │   └── Dockerfile      # Container deployment
+│   ├── client.py           # OpenEnv client
+│   ├── models.py           # Action/Observation Pydantic models
+│   ├── openenv.yaml        # OpenEnv spec
+│   └── pyproject.toml      # pip-installable package config
+├── tests/
+│   └── test_api_drift_gym.py
+├── plots/                  # Generated evaluation plots
+│   ├── success_rate_comparison.png
+│   ├── reward_per_episode.png
+│   └── training_loss.png
+├── results/                # Generated evaluation data
+│   ├── metrics.json
+│   ├── trajectory_failed.json
+│   └── trajectory_success.json
+└── final_model/            # Saved LoRA adapter + tokenizer
 ```
 
-## Current Strengths
+---
 
-What is already implemented well:
+## Key Design Decisions
 
-- hidden schema drift instead of fully supervised schema reveal
-- multi-step workflows instead of isolated API calls
-- endpoint-aware action format
-- compatibility support for older single-endpoint actions
-- reward shaping that encourages repair order
-- deterministic tests for key behavior
-- text trajectory logging for debugging
+**1) Inspect-first over retry loops**
+The core learned behavior is inspect → transform → act, not retry spam.
 
-## Current Limitations
+**2) Partial observability by design**
+Hiding full schema forces reasoning over observation history.
 
-What is not implemented yet:
+**3) SFT first for stability**
+Teacher trajectories provide a stable policy prior before reward-only optimization.
 
-- no formal Gymnasium wrapper or spaces object
-- no learned agent or training pipeline in tracked repo files
-- no vectorized environment support
-- no stochastic response payload semantics beyond schema validity
-- no observation masking beyond the current hint design
-- no benchmark harness for comparing policies
-- no persistence layer or dataset export for trajectories
+**4) Real difficulty tiers**
+Easy/Medium/Hard change observability and drift timing, not just thresholds.
 
-So the repo is best understood as a clean prototype environment, not a full training framework.
+**5) GRPO is a natural extension**
+SFT builds structured behavior; GRPO can improve robustness under unseen drift.
 
-## Best Short Description For Another Model
+---
 
-If you want to brief Claude Opus or any other model quickly, use something close to this:
+## Extending to GRPO
 
-> This repo implements a reinforcement-learning style environment called `api_drift_gym` for studying how an agent adapts to hidden API schema drift in enterprise workflows. Each episode contains one or more ordered workflow stages across endpoints like `/user`, `/orders`, `/process`, and `/summary`. The agent starts with old schemas, may fail with misleading errors, can inspect schemas for partial or full hints, transform request payloads, retry, and is rewarded for following a sensible repair order. Success requires exact matching of the hidden drifted schema and completion of the whole workflow before the step budget runs out.
+`train_grpo.py` extends the same environment and action semantics with reward-based optimization.
 
-## Detailed Handoff Notes
+```python
+# train_grpo.py (simplified intent)
+# - same environment semantics
+# - rollout + reward collection
+# - policy updates on relative advantage
+```
 
-If another model is going to continue work on this project, these are the most important facts to keep in mind:
+---
 
-- The authoritative environment logic is in `api_drift_gym/env.py`.
-- Drift generation and workflow templates are in `api_drift_gym/api_simulator.py`.
-- The reward contract is in `api_drift_gym/reward.py`.
-- The current public behavior is best summarized by the tests.
-- `demo.py` is the clearest executable narrative of the intended adaptation loop.
-- Legacy action formats are intentionally preserved and should not be broken accidentally.
-- Hidden drift should remain hidden at reset time; full schema detail should only surface after the right interaction pattern.
+## What We Learned
 
-## Suggested Next Steps
-
-Natural extensions from here would be:
-
-- add a real RL training loop and policy baseline
-- add Gymnasium-compatible wrappers
-- export trajectories for supervised or offline RL experiments
-- create harder drift types such as type drift, optional fields, and nested payload changes
-- add evaluation metrics across curricula and seeds
-- introduce partial observability experiments and ablations
-
-## Summary
-
-This project is a compact but thoughtfully structured environment for testing API-repair behavior under hidden schema drift. The main novelty is not raw complexity; it is the combination of:
-
-- workflow-level adaptation
-- delayed schema revelation
-- adversarial error signals
-- reward shaping around repair order
-
-That makes it a good starting point for experimentation with agents that must diagnose, adapt, and recover inside changing software systems.
+1. Observability calibration matters more than cosmetic difficulty labels.
+2. Trajectory quality beats raw trajectory count.
+3. Stable reward shaping is upstream of stable training.
+4. Training surfaces environment bugs quickly (which is good).
+5. A small model with disciplined structure can outperform larger but poorly trained systems.
