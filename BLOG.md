@@ -11,6 +11,8 @@ By episode 10, it had learned to stop blindly retrying. It started inspecting fi
 > 🏆 **Submission for Theme #3.2: Personalized Tasks**  
 > 🎯 **Targeting Bonus Prize:** Patronus AI - *Consumer Workflows with Schema Drift*
 
+> 📺 **[Watch the Demo Video on YouTube](https://youtu.be/xtTVidMCWY8?si=ijwyyznccFmpzsfL)**
+
 ---
 
 ## What Problem Are We Solving?

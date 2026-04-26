@@ -71,7 +71,7 @@ By episode 10, it had learned to stop blindly retrying. It started inspecting fi
 | **Source Code** | [github.com/shivamkr1353/Meta_Hack_Round2](https://github.com/shivamkr1353/Meta_Hack_Round2) |
 | **Training Notebook (Colab)** | [train.ipynb](train.ipynb) |
 | **Blog Post / Writeup** | [BLOG.md](BLOG.md) |
-| **Demo Video (YouTube)** | *Coming soon — will be linked here before deadline* |
+| **Demo Video (YouTube)** | [youtu.be/xtTVidMCWY8](https://youtu.be/xtTVidMCWY8?si=ijwyyznccFmpzsfL) |
 
 ---
 
