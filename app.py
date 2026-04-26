@@ -490,10 +490,6 @@ and the agent must learn to **inspect → transform → retry** instead of blind
 def build_demo():
     with gr.Blocks(
         title="API Drift Gym",
-        theme=gr.themes.Base(
-            primary_hue="blue",
-            neutral_hue="slate",
-        ),
     ) as demo:
         gr.Markdown(DESCRIPTION)
 
@@ -517,7 +513,6 @@ def build_demo():
                 label="Episode Trace",
                 lines=25,
                 max_lines=40,
-                show_copy_button=True,
             )
             run_btn.click(fn=run_episode, inputs=[agent_type, difficulty, seed], outputs=output)
 
@@ -534,7 +529,6 @@ def build_demo():
                 label="Comparison Results",
                 lines=40,
                 max_lines=80,
-                show_copy_button=True,
             )
             cmp_btn.click(fn=run_comparison, inputs=[cmp_difficulty, cmp_seed], outputs=cmp_output)
 
@@ -551,7 +545,6 @@ def build_demo():
                 label="Evaluation Summary",
                 lines=15,
                 max_lines=25,
-                show_copy_button=True,
             )
             batch_btn.click(fn=run_batch_eval, inputs=[batch_difficulty, batch_n], outputs=batch_output)
 
@@ -568,4 +561,5 @@ Model: `Qwen/Qwen2.5-0.5B-Instruct` + LoRA SFT |
 
 if __name__ == "__main__":
     demo = build_demo()
-    demo.launch(server_name="0.0.0.0", server_port=7860)
+    theme = gr.themes.Base(primary_hue="blue", neutral_hue="slate")
+    demo.launch(server_name="0.0.0.0", server_port=7860, theme=theme)

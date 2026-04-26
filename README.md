@@ -108,7 +108,7 @@ hf jobs run -d \
   bash -lc "git clone https://github.com/shivamkr1353/Meta_Hack_Round2.git && \
            cd Meta_Hack_Round2 && \
            pip install -r requirements.txt && \
-           PYTHONUNBUFFERED=1 python3 train_clean.py"
+           PYTHONUNBUFFERED=1 python3 train.py"
 ```
 
 **Monitor**
@@ -137,7 +137,7 @@ huggingface-cli upload shivamkr1353/api-drift-sft-qwen ./final_model \
 
 ```bash
 # Full evaluation (random vs SFT vs expert, all difficulties)
-python evaluate.py
+python eval.py
 
 # Generate plots
 python generate_plots.py
@@ -172,7 +172,7 @@ The `app.py` file serves as the Gradio-based Space entry point, while `api_drift
 |------------------|-------------|---------|
 | `difficulty` | `easy`, `medium`, or `hard` | sampled / optional |
 | `max_steps` | max actions per episode | `20` |
-| `NUM_EPOCHS` | SFT epochs (`train_clean.py`) | `2` |
+| `NUM_EPOCHS` | SFT epochs (`train.py`) | `2` |
 | `PER_DEVICE_TRAIN_BATCH_SIZE` | per-device batch size | `2` |
 | `GRADIENT_ACCUMULATION_STEPS` | grad accumulation | `4` |
 | `HF_TOKEN` | Hugging Face access token | required for jobs/upload |
@@ -184,13 +184,9 @@ The `app.py` file serves as the Gradio-based Space entry point, while `api_drift
 ```
 Meta_Hack_Round2/
 ├── app.py                  # Gradio demo UI (HF Space entry point)
-├── evaluate.py             # Full evaluation: random vs SFT vs expert
+├── eval.py                 # Full evaluation: random vs SFT vs expert
 ├── generate_plots.py       # Publication-quality plot generation
-├── train_clean.py          # SFT training (TRL + LoRA, T4-optimized)
-├── train_grpo.py           # GRPO extension (reward-based, experimental)
-├── inference.py            # Adapter inference sanity checks
-├── baseline.py             # Simple random-action baseline
-├── demo.py                 # Scripted walkthrough
+├── train.py                # SFT training (TRL + LoRA, T4-optimized)
 ├── stage_aware_policy.py   # Expert policy module
 ├── requirements.txt        # Pinned dependencies
 ├── api_drift_gym/          # Core environment package
@@ -199,15 +195,14 @@ Meta_Hack_Round2/
 │   ├── reward.py           # Reward shaping engine
 │   ├── logger.py           # Trajectory logger
 │   └── __init__.py
-├── api_drift_env/          # OpenEnv deployment package
-│   ├── server/
-│   │   ├── app.py          # FastAPI server (OpenEnv endpoints)
-│   │   ├── api_drift_env_environment.py  # OpenEnv Environment adapter
-│   │   └── Dockerfile      # Container deployment
-│   ├── client.py           # OpenEnv client
-│   ├── models.py           # Action/Observation Pydantic models
-│   ├── openenv.yaml        # OpenEnv spec
-│   └── pyproject.toml      # pip-installable package config
+├── server/
+│   ├── app.py          # FastAPI server (OpenEnv endpoints)
+│   ├── api_drift_env_environment.py  # OpenEnv Environment adapter
+│   └── Dockerfile      # Container deployment
+├── client.py           # OpenEnv client
+├── models.py           # Action/Observation Pydantic models
+├── openenv.yaml        # OpenEnv spec
+├── pyproject.toml      # pip-installable package config
 ├── tests/
 │   └── test_api_drift_gym.py
 ├── plots/                  # Generated evaluation plots
