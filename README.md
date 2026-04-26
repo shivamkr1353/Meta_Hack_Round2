@@ -25,7 +25,7 @@ By episode 10, it had learned to stop blindly retrying. It started inspecting fi
 > 🏆 **Submission for Theme #3.2: Personalized Tasks**  
 > 🎯 **Targeting Bonus Prize:** Patronus AI - *Consumer Workflows with Schema Drift*
 
-> Built with [OpenEnv v0.2.1](https://github.com/meta-pytorch/OpenEnv/tree/v0.2.1) | Trained on [HF Jobs](https://huggingface.co/docs/hub/jobs) with T4 GPU | Model: `Qwen2.5-0.5B-Instruct` + LoRA SFT | Training via [HF TRL](https://github.com/huggingface/trl) in [Colab](train.ipynb)
+> Built with [OpenEnv v0.2.3](https://github.com/meta-pytorch/OpenEnv/tree/v0.2.3) | Trained on [HF Jobs](https://huggingface.co/docs/hub/jobs) with T4 GPU | Model: `Qwen2.5-0.5B-Instruct` + LoRA SFT | Training via [HF TRL](https://github.com/huggingface/trl) in [Colab](train.ipynb)
 
 ---
 

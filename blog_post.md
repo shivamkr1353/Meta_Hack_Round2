@@ -205,4 +205,4 @@ SFT builds structured behavior; GRPO can improve robustness under unseen drift.
 4. Training surfaces environment bugs quickly (which is good).
 5. A small model with disciplined structure can outperform larger but poorly trained systems.
 
-> Built with [OpenEnv v0.2.1](https://github.com/meta-pytorch/OpenEnv/tree/v0.2.1) | Trained on [HF Jobs](https://huggingface.co/docs/hub/jobs) with T4 GPU | Model: `Qwen2.5-0.5B-Instruct` + LoRA SFT | Adapter: [shivamkr1353/api-drift-sft-qwen](https://huggingface.co/shivamkr1353/api-drift-sft-qwen)
+> Built with [OpenEnv v0.2.3](https://github.com/meta-pytorch/OpenEnv/tree/v0.2.3) | Trained on [HF Jobs](https://huggingface.co/docs/hub/jobs) with T4 GPU | Model: `Qwen2.5-0.5B-Instruct` + LoRA SFT | Adapter: [shivamkr1353/api-drift-sft-qwen](https://huggingface.co/shivamkr1353/api-drift-sft-qwen)
