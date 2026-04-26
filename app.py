@@ -579,5 +579,4 @@ Model: `Qwen/Qwen2.5-0.5B-Instruct` + LoRA SFT |
 
 if __name__ == "__main__":
     demo = build_demo()
-    theme = gr.themes.Base(primary_hue="blue", neutral_hue="slate")
-    demo.launch(server_name="0.0.0.0", server_port=7860, theme=theme)
+    demo.launch(server_name="0.0.0.0", server_port=7860)
