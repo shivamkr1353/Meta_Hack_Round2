@@ -70,7 +70,7 @@ By episode 10, it had learned to stop blindly retrying. It started inspecting fi
 | **Trained Adapter** | [huggingface.co/shivamkr1353/api-drift-sft-qwen](https://huggingface.co/shivamkr1353/api-drift-sft-qwen) |
 | **Source Code** | [github.com/shivamkr1353/Meta_Hack_Round2](https://github.com/shivamkr1353/Meta_Hack_Round2) |
 | **Training Notebook (Colab)** | [train.ipynb](train.ipynb) |
-| **Blog Post / Writeup** | [blog_post.md](blog_post.md) |
+| **Blog Post / Writeup** | [BLOG.md](BLOG.md) |
 | **Demo Video (YouTube)** | *Coming soon — will be linked here before deadline* |
 
 ---
@@ -79,7 +79,7 @@ By episode 10, it had learned to stop blindly retrying. It started inspecting fi
 
 Curious about how we designed the reward engine, implemented schema drift, and taught a 0.5B model to debug like a senior engineer?
 
-👉 **[Read the Full Hackathon Blog Post Here](blog_post.md)**
+👉 **[Read the Full Hackathon Blog Post Here](BLOG.md)**
 
 ---
 
