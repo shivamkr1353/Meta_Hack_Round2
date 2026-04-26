@@ -398,7 +398,7 @@ def run_comparison(difficulty: str, seed: int) -> str:
     return "\n\n".join(results)
 
 
-def run_batch_eval(difficulty: str, n_episodes: int) -> str:
+def run_batch_eval(difficulty: str, n_episodes: int):
     """Run batch evaluation and show summary statistics."""
     n_episodes = min(int(n_episodes), 100)  # Cap at 100
     lines = []
@@ -407,8 +407,16 @@ def run_batch_eval(difficulty: str, n_episodes: int) -> str:
     lines.append(f"{'='*60}")
     lines.append("")
 
+    yield "\n".join(lines) + "\n\nInitializing..."
+
     results = {}
     for agent_type in ["random", "expert", "sft"]:
+        label = {"random": "Random Agent", "expert": "Expert Policy", "sft": "SFT Agent (Qwen 0.5B)"}[agent_type]
+        
+        status_idx = len(lines)
+        lines.append(f"  ⏳ Running {label} (0/{n_episodes})...")
+        yield "\n".join(lines)
+
         env = ApiDriftGymEnv(max_steps=20, seed=42, difficulty=difficulty)
         successes = 0
         total_r = 0.0
@@ -447,16 +455,21 @@ def run_batch_eval(difficulty: str, n_episodes: int) -> str:
             resolved = env.state.get("resolved", False)
             successes += int(resolved)
             total_r += ep_r
+            
+            if (ep + 1) % max(1, n_episodes // 5) == 0:
+                lines[status_idx] = f"  ⏳ Running {label} ({ep+1}/{n_episodes})..."
+                yield "\n".join(lines)
 
         rate = successes / n_episodes * 100
         avg_r = total_r / n_episodes
-        label = {"random": "Random Agent", "expert": "Expert Policy", "sft": "SFT Agent (Qwen 0.5B)"}[agent_type]
         results[agent_type] = (rate, avg_r)
-        lines.append(f"  {label:<30s} │ Success: {rate:5.1f}% │ Avg Reward: {avg_r:+.2f}")
+        
+        lines[status_idx] = f"  {label:<30s} │ Success: {rate:5.1f}% │ Avg Reward: {avg_r:+.2f}"
+        yield "\n".join(lines)
 
     lines.append("")
     lines.append(f"{'─'*60}")
-    return "\n".join(lines)
+    yield "\n".join(lines)
 
 
 # ─────────────────────────────────────────────────────────────────
