@@ -8,6 +8,9 @@ By episode 10, it had learned to stop blindly retrying. It started inspecting fi
 
 **This is API Drift Gym** — an adversarial environment where an RL-style agent learns structured fault recovery by navigating real-world API breakage patterns: silent schema drift, partial observability, and cascading failures that punish guessing.
 
+> 🏆 **Submission for Theme #3.2: Personalized Tasks**  
+> 🎯 **Targeting Bonus Prize:** Patronus AI - *Consumer Workflows with Schema Drift*
+
 ---
 
 ## What Problem Are We Solving?
