@@ -190,7 +190,7 @@ huggingface-cli upload shivamkr1353/api-drift-sft-qwen ./final_model \
 python eval.py
 
 # Generate plots
-python generate_plots.py
+python plot_rewards.py
 
 # Run interactive demo
 python app.py
@@ -235,7 +235,7 @@ The `app.py` file serves as the Gradio-based Space entry point, while `api_drift
 Meta_Hack_Round2/
 ├── app.py                  # Gradio demo UI (HF Space entry point)
 ├── eval.py                 # Full evaluation: random vs SFT vs expert
-├── generate_plots.py       # Publication-quality plot generation
+├── plot_rewards.py         # Reward curve visualization
 ├── train.py                # SFT training (TRL + LoRA, T4-optimized)
 ├── stage_aware_policy.py   # Expert policy module
 ├── requirements.txt        # Pinned dependencies
