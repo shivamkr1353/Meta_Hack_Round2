@@ -228,15 +228,22 @@ def format_obs_for_model(obs, tracker):
 
 _sft_model = None
 _sft_tokenizer = None
+_sft_load_attempted = False  # Cache failure so we don't retry every step
 
 
 def load_sft_model():
-    """Lazy-load the SFT model. Returns (model, tokenizer) or (None, None)."""
-    global _sft_model, _sft_tokenizer
-    if _sft_model is not None:
+    """Lazy-load the SFT model. Returns (model, tokenizer) or (None, None).
+    Skips loading entirely on CPU — model requires GPU to run at usable speed."""
+    global _sft_model, _sft_tokenizer, _sft_load_attempted
+    if _sft_load_attempted:
         return _sft_model, _sft_tokenizer
+    _sft_load_attempted = True
     try:
         import torch
+        # Skip download on CPU — would hang trying to load a 500M param model
+        if not torch.cuda.is_available():
+            return None, None
+
         from transformers import AutoTokenizer, AutoModelForCausalLM
         from peft import PeftModel
 
@@ -246,16 +253,13 @@ def load_sft_model():
         if not os.path.exists(adapter_path):
             return None, None
 
-        device = "cuda" if torch.cuda.is_available() else "cpu"
         _sft_tokenizer = AutoTokenizer.from_pretrained(base_model_name, trust_remote_code=True)
         base = AutoModelForCausalLM.from_pretrained(
             base_model_name,
-            torch_dtype=torch.float16 if device == "cuda" else torch.float32,
-            device_map="auto" if device == "cuda" else None,
+            dtype=torch.float16,
+            device_map="auto",
             trust_remote_code=True,
         )
-        if device == "cpu":
-            base = base.to(device)
         _sft_model = PeftModel.from_pretrained(base, adapter_path)
         _sft_model.eval()
         return _sft_model, _sft_tokenizer
@@ -398,9 +402,9 @@ def run_comparison(difficulty: str, seed: int) -> str:
     return "\n\n".join(results)
 
 
-def run_batch_eval(difficulty: str, n_episodes: int):
+def run_batch_eval(difficulty: str, n_episodes: int):  # noqa: C901
     """Run batch evaluation and show summary statistics."""
-    n_episodes = min(int(n_episodes), 100)  # Cap at 100
+    n_episodes = min(int(n_episodes), 50)   # Cap at 50 for speed
     lines = []
     lines.append(f"{'='*60}")
     lines.append(f"📊 Batch Evaluation — {difficulty.capitalize()} | {n_episodes} episodes")
@@ -417,7 +421,8 @@ def run_batch_eval(difficulty: str, n_episodes: int):
         lines.append(f"  ⏳ Running {label} (0/{n_episodes})...")
         yield "\n".join(lines)
 
-        env = ApiDriftGymEnv(max_steps=20, seed=42, difficulty=difficulty)
+        # Use max_steps=10 for batch eval speed; full 20 only in single-episode view
+        env = ApiDriftGymEnv(max_steps=10, seed=42, difficulty=difficulty)
         successes = 0
         total_r = 0.0
 
@@ -552,7 +557,7 @@ def build_demo():
                     value="hard",
                     label="Difficulty",
                 )
-                batch_n = gr.Number(value=20, label="Episodes", precision=0, info="Number of episodes (max 100)")
+                batch_n = gr.Number(value=5, label="Episodes", precision=0, info="Number of episodes (max 50)")
             batch_btn = gr.Button("▶ Run Batch Evaluation", variant="primary", size="lg")
             batch_output = gr.Textbox(
                 label="Evaluation Summary",

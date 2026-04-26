@@ -69,6 +69,9 @@ By episode 10, it had learned to stop blindly retrying. It started inspecting fi
 | **Live Demo (HF Space)** | [huggingface.co/spaces/shivamkr1353/api-drift-gym](https://huggingface.co/spaces/shivamkr1353/api-drift-gym) |
 | **Trained Adapter** | [huggingface.co/shivamkr1353/api-drift-sft-qwen](https://huggingface.co/shivamkr1353/api-drift-sft-qwen) |
 | **Source Code** | [github.com/shivamkr1353/Meta_Hack_Round2](https://github.com/shivamkr1353/Meta_Hack_Round2) |
+| **Training Notebook (Colab)** | [train.ipynb](train.ipynb) |
+| **Blog Post / Writeup** | [blog_post.md](blog_post.md) |
+| **Demo Video (YouTube)** | *Coming soon — will be linked here before deadline* |
 
 ---
 
@@ -85,7 +88,7 @@ Curious about how we designed the reward engine, implemented schema drift, and t
 ```
 HF Jobs (T4 GPU)                         API Drift Environment
 ┌─────────────────────────────┐          ┌──────────────────────────┐
-│  train_clean.py             │          │  ApiDriftGymEnv          │
+│  train.py               │          │  ApiDriftGymEnv          │
 │  ├─ SFTTrainer (TRL)        │◄────────►│  ├─ ApiDriftSimulator    │
 │  ├─ Qwen2.5-0.5B-Instruct   │          │  ├─ Hidden drift logic   │
 │  ├─ LoRA (r=16, alpha=32)   │          │  ├─ Partial hints        │
